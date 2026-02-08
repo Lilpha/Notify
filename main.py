@@ -10,6 +10,20 @@ import time
 from logger_config import setup_logger, get_logger, get_recent_logs
 from dotenv import load_dotenv
 
+# 라즈베리파이 모니터링 (선택적)
+try:
+    from raspi_monitor import (
+        get_system_info, get_raspi_info, get_process_info, 
+        get_network_info, format_bytes, is_raspberry_pi
+    )
+    RASPI_AVAILABLE = True
+    logger_temp = get_logger("NotifyBot")
+    logger_temp.info("Raspberry Pi monitoring module loaded")
+except ImportError as e:
+    RASPI_AVAILABLE = False
+    logger_temp = get_logger("NotifyBot")
+    logger_temp.warning(f"Raspberry Pi monitoring unavailable: {e}")
+
 # .env 파일 로드
 load_dotenv()
 
@@ -392,6 +406,186 @@ async def ping(interaction: discord.Interaction):
     embed.add_field(name="상태", value=status, inline=False)
     
     await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# ============================================
+# 라즈베리파이 시스템 모니터링 커맨드
+# ============================================
+
+if RASPI_AVAILABLE:
+    @client.tree.command(name="system", description="시스템 상태를 확인합니다")
+    async def system(interaction: discord.Interaction):
+        logger.info(f"User {interaction.user} requested system info")
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            info = get_system_info()
+            if not info:
+                await interaction.followup.send("시스템 정보를 가져올 수 없습니다", ephemeral=True)
+                return
+            
+            embed = discord.Embed(
+                title="시스템 상태",
+                color=discord.Color.blue()
+            )
+            
+            # CPU 정보
+            cpu_bar = create_bar(info['cpu']['percent'], 100)
+            embed.add_field(
+                name="CPU",
+                value=f"{cpu_bar} {info['cpu']['percent']}%\n{info['cpu']['count']}코어, {info['cpu']['freq_current']:.0f}MHz",
+                inline=False
+            )
+            
+            # 메모리 정보
+            mem_bar = create_bar(info['memory']['percent'], 100)
+            mem_used_gb = info['memory']['used'] / (1024**3)
+            mem_total_gb = info['memory']['total'] / (1024**3)
+            embed.add_field(
+                name="메모리",
+                value=f"{mem_bar} {info['memory']['percent']}%\n{mem_used_gb:.2f}GB / {mem_total_gb:.2f}GB",
+                inline=False
+            )
+            
+            # 디스크 정보
+            disk_bar = create_bar(info['disk']['percent'], 100)
+            disk_used_gb = info['disk']['used'] / (1024**3)
+            disk_total_gb = info['disk']['total'] / (1024**3)
+            embed.add_field(
+                name="디스크",
+                value=f"{disk_bar} {info['disk']['percent']}%\n{disk_used_gb:.2f}GB / {disk_total_gb:.2f}GB",
+                inline=False
+            )
+            
+            # 시스템 가동 시간 & 로드
+            embed.add_field(name="가동 시간", value=info['uptime'], inline=True)
+            embed.add_field(
+                name="로드 평균",
+                value=f"{info['load_avg'][0]:.2f}, {info['load_avg'][1]:.2f}, {info['load_avg'][2]:.2f}",
+                inline=True
+            )
+            
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            
+        except Exception as e:
+            logger.error(f"System command error: {e}", exc_info=True)
+            await interaction.followup.send(f"오류 발생: {e}", ephemeral=True)
+    
+    @client.tree.command(name="raspi", description="라즈베리파이 하드웨어 정보를 확인합니다")
+    async def raspi(interaction: discord.Interaction):
+        logger.info(f"User {interaction.user} requested Raspberry Pi info")
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            info = get_raspi_info()
+            if not info:
+                await interaction.followup.send("라즈베리파이 정보를 가져올 수 없습니다", ephemeral=True)
+                return
+            
+            embed = discord.Embed(
+                title="Raspberry Pi 상태",
+                color=discord.Color.green() if info.get('cpu_temp', 100) < 70 else discord.Color.red()
+            )
+            
+            # 모델 정보
+            if 'model' in info:
+                embed.add_field(name="모델", value=info['model'], inline=False)
+            
+            # 온도 정보
+            temp_text = []
+            if info.get('cpu_temp'):
+                cpu_temp = info['cpu_temp']
+                temp_emoji = "🔥" if cpu_temp > 80 else "⚠️" if cpu_temp > 70 else "✅"
+                temp_text.append(f"CPU: {cpu_temp}°C {temp_emoji}")
+            if info.get('gpu_temp'):
+                temp_text.append(f"GPU: {info['gpu_temp']}°C")
+            
+            if temp_text:
+                embed.add_field(name="온도", value="\n".join(temp_text), inline=True)
+            
+            # 전압 & 클럭
+            if info.get('voltage'):
+                voltage_emoji = "⚠️" if info['voltage'] < 4.8 else "✅"
+                embed.add_field(name="전압", value=f"{info['voltage']}V {voltage_emoji}", inline=True)
+            
+            if info.get('clock_mhz'):
+                embed.add_field(name="클럭", value=f"{info['clock_mhz']:.0f}MHz", inline=True)
+            
+            # 쓰로틀링 상태
+            if 'throttled_status' in info:
+                status_text = "\n".join(info['throttled_status'])
+                status_color = "🟢" if info['throttled_status'] == ["OK"] else "🔴"
+                embed.add_field(name=f"쓰로틀링 {status_color}", value=status_text, inline=False)
+            
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            
+        except Exception as e:
+            logger.error(f"Raspi command error: {e}", exc_info=True)
+            await interaction.followup.send(f"오류 발생: {e}", ephemeral=True)
+    
+    @client.tree.command(name="process", description="봇 프로세스 정보를 확인합니다")
+    async def process(interaction: discord.Interaction):
+        logger.info(f"User {interaction.user} requested process info")
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            info = get_process_info()
+            if not info:
+                await interaction.followup.send("프로세스 정보를 가져올 수 없습니다", ephemeral=True)
+                return
+            
+            embed = discord.Embed(
+                title="봇 프로세스 상태",
+                color=discord.Color.purple()
+            )
+            
+            embed.add_field(name="메모리 사용량", value=f"{info['memory_mb']} MB ({info['memory_percent']}%)", inline=True)
+            embed.add_field(name="CPU 사용률", value=f"{info['cpu_percent']}%", inline=True)
+            embed.add_field(name="스레드 수", value=str(info['threads']), inline=True)
+            embed.add_field(name="프로세스 실행 시간", value=info['runtime'], inline=True)
+            embed.add_field(name="Python 버전", value=info['python_version'], inline=True)
+            embed.add_field(name="PID", value=str(info['pid']), inline=True)
+            
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            
+        except Exception as e:
+            logger.error(f"Process command error: {e}", exc_info=True)
+            await interaction.followup.send(f"오류 발생: {e}", ephemeral=True)
+    
+    @client.tree.command(name="network", description="네트워크 정보를 확인합니다")
+    async def network(interaction: discord.Interaction):
+        logger.info(f"User {interaction.user} requested network info")
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            info = get_network_info()
+            if not info:
+                await interaction.followup.send("네트워크 정보를 가져올 수 없습니다", ephemeral=True)
+                return
+            
+            embed = discord.Embed(
+                title="네트워크 상태",
+                color=discord.Color.teal()
+            )
+            
+            if 'local_ip' in info:
+                embed.add_field(name="로컬 IP", value=info['local_ip'], inline=True)
+            if 'interface' in info:
+                embed.add_field(name="인터페이스", value=info['interface'], inline=True)
+            
+            embed.add_field(name="전송량", value=info['bytes_sent'], inline=True)
+            embed.add_field(name="수신량", value=info['bytes_recv'], inline=True)
+            
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            
+        except Exception as e:
+            logger.error(f"Network command error: {e}", exc_info=True)
+            await interaction.followup.send(f"오류 발생: {e}", ephemeral=True)
+
+def create_bar(value, max_value, length=10):
+    """프로그레스 바 생성"""
+    filled = int((value / max_value) * length)
+    bar = "█" * filled + "░" * (length - filled)
+    return f"[{bar}]"
 
 # ============================================
 # scraper에서 호출할 함수

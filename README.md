@@ -21,6 +21,7 @@ notify/
 ├── main.py              # Discord 봇 메인 파일
 ├── scraper.py           # 공지사항 스크래핑 모듈
 ├── logger_config.py     # 로깅 시스템 설정
+├── raspi_monitor.py     # 라즈베리파이 시스템 모니터링
 ├── .env                 # 환경 변수 (토큰, ID 등) [주의] Git에 포함 안됨
 ├── .env.example         # 환경 변수 예제 파일
 ├── .gitignore           # Git 제외 파일 목록
@@ -234,6 +235,42 @@ Current mode: Individual
 - **log_type**: 전체 로그 또는 에러만
 - Discord에서 직접 로그 확인 가능
 
+### 시스템 모니터링 명령어 (라즈베리파이 전용)
+
+#### `/system`
+시스템 리소스 상태 확인
+- CPU 사용률 및 주파수
+- 메모리 사용량 (GB)
+- 디스크 사용량 (GB)
+- 시스템 가동 시간
+- 로드 평균 (1분, 5분, 15분)
+
+#### `/raspi`
+라즈베리파이 하드웨어 상태 확인
+- CPU/GPU 온도
+- 전압 상태
+- CPU 클럭 속도
+- 쓰로틀링 상태 (과열, 저전압 등)
+- 모델 정보
+
+#### `/process`
+봇 프로세스 정보 확인
+- 메모리 사용량 (MB)
+- CPU 사용률
+- 스레드 개수
+- 프로세스 실행 시간
+- Python 버전
+- 프로세스 ID (PID)
+
+#### `/network`
+네트워크 상태 확인
+- 로컬 IP 주소
+- 네트워크 인터페이스
+- 전송/수신 데이터량
+
+**참고**: 시스템 모니터링 명령어는 `psutil` 패키지가 설치되어 있어야 사용 가능합니다. 
+라즈베리파이에서는 추가 하드웨어 정보(온도, 전압 등)를 제공합니다.
+
 ## 작동 원리
 
 ### 1. 공지 수집 (scraper.py)
@@ -370,6 +407,7 @@ if i > 0:
 - **Selenium**: 웹 스크래핑
 - **APScheduler**: 주기적 작업 스케줄링
 - **python-dotenv**: 환경 변수 관리
+- **psutil**: 시스템 모니터링
 - **asyncio**: 비동기 처리
 - **threading**: 멀티스레딩
 - **logging**: 파일 기반 로깅 시스템
@@ -393,6 +431,181 @@ if i > 0:
     │ Chrome   │
     └──────────┘
 ```
+
+## 라즈베리파이 배포 가이드
+
+### 준비 사항
+
+**지원 기기**:
+- Raspberry Pi 3 Model B+ (테스트됨)
+- Raspberry Pi 4 이상 권장
+- Raspbian OS (Raspberry Pi OS)
+
+### 설치 과정
+
+#### 1. 시스템 업데이트
+```bash
+sudo apt update
+sudo apt upgrade -y
+```
+
+#### 2. Python 및 필수 패키지 설치
+```bash
+# Python 3.8 이상 확인
+python3 --version
+
+# pip 업그레이드
+python3 -m pip install --upgrade pip
+
+# 시스템 패키지 설치
+sudo apt install -y chromium-browser chromium-chromedriver
+```
+
+#### 3. 프로젝트 설정
+```bash
+# 프로젝트 디렉토리로 이동
+cd /home/pi/notify
+
+# 가상환경 생성
+python3 -m venv venv
+source venv/bin/activate
+
+# 패키지 설치
+pip install -r requirements.txt
+```
+
+#### 4. 환경 변수 설정
+```bash
+# .env 파일 생성
+cp .env.example .env
+nano .env
+# DISCORD_TOKEN, GUILD_ID, DEFAULT_CHANNEL_ID 입력 후 저장 (Ctrl+X, Y, Enter)
+```
+
+#### 5. 자동 시작 설정 (systemd 서비스)
+
+서비스 파일 생성:
+```bash
+sudo nano /etc/systemd/system/discord-notice-bot.service
+```
+
+다음 내용 입력:
+```ini
+[Unit]
+Description=Discord Notice Bot
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/notify
+Environment="PATH=/home/pi/notify/venv/bin"
+ExecStart=/home/pi/notify/venv/bin/python /home/pi/notify/main.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+서비스 활성화:
+```bash
+# 서비스 활성화
+sudo systemctl daemon-reload
+sudo systemctl enable discord-notice-bot.service
+
+# 서비스 시작
+sudo systemctl start discord-notice-bot.service
+
+# 상태 확인
+sudo systemctl status discord-notice-bot.service
+
+# 로그 확인
+sudo journalctl -u discord-notice-bot.service -f
+```
+
+#### 6. 서비스 관리 명령어
+```bash
+# 시작
+sudo systemctl start discord-notice-bot.service
+
+# 중지
+sudo systemctl stop discord-notice-bot.service
+
+# 재시작
+sudo systemctl restart discord-notice-bot.service
+
+# 상태 확인
+sudo systemctl status discord-notice-bot.service
+
+# 자동 시작 비활성화
+sudo systemctl disable discord-notice-bot.service
+```
+
+### 시스템 모니터링
+
+라즈베리파이에서 실행 시 추가 모니터링 기능 사용 가능:
+
+- **`/system`**: CPU, 메모리, 디스크 사용량
+- **`/raspi`**: 온도, 전압, 쓰로틀링 상태
+- **`/process`**: 봇 프로세스 리소스 사용량
+- **`/network`**: 네트워크 상태 및 트래픽
+
+**권장 모니터링 주기**:
+- 온도: 70도 이하 유지
+- 전압: 4.8V 이상 유지
+- 메모리: 80% 이하 유지
+
+### 성능 최적화 팁
+
+#### 1. 스왑 메모리 조정 (1GB 이하 RAM 모델)
+```bash
+sudo nano /etc/dphys-swapfile
+# CONF_SWAPSIZE=1024 로 변경
+sudo /etc/init.d/dphys-swapfile restart
+```
+
+#### 2. Headless 모드 최적화
+코드에 이미 헤드리스 Chrome 설정이 포함되어 있음:
+- `--headless` 옵션
+- `--disable-gpu`, `--no-sandbox` 설정
+- 메모리 사용 최소화
+
+#### 3. 로그 관리
+```bash
+# 오래된 로그 자동 삭제 (cron 설정)
+crontab -e
+
+# 매주 일요일 자정에 30일 이상 된 로그 삭제
+0 0 * * 0 find /home/pi/notify/logs -name "*.log*" -mtime +30 -delete
+```
+
+### 문제 해결 (라즈베리파이)
+
+#### Chrome/Chromium 메모리 부족
+```bash
+# Chrome 옵션에 메모리 제한 추가
+options.add_argument('--disable-dev-shm-usage')
+options.add_argument('--single-process')
+```
+
+#### 서비스가 시작되지 않음
+```bash
+# 로그 확인
+sudo journalctl -u discord-notice-bot.service -n 50
+
+# 권한 확인
+ls -la /home/pi/notify
+
+# Python 경로 확인
+which python3
+```
+
+#### 과열 문제
+- `/raspi` 명령어로 온도 확인
+- 히트싱크 설치 권장
+- 케이스 환기구 확인
+- 팬 설치 고려 (70도 이상 지속 시)
 
 ## 라이센스
 
