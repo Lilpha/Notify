@@ -1,0 +1,15 @@
+{
+  "watch": ["."],
+  "ext": "py",
+  "exec": "python",
+  "ignore": [
+    "venv/*",
+    "__pycache__/*",
+    "*.pyc",
+    "*.log",
+    ".git",
+    "node_modules"
+  ],
+  "delay": 500,
+  "verbose": false
+}

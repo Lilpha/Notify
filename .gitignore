@@ -1,0 +1,46 @@
+# 환경 변수 및 시크릿
+.env
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# 로그 파일
+logs/
+*.log
+
+# 설정 파일
+config.json
+
+# ID 추적 파일
+last_id_*.txt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Selenium
+chromedriver.exe
+geckodriver.exe
+
+# 백업 파일
+*.bak
+*.backup
