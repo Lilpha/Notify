@@ -240,9 +240,10 @@ def force_scan_single(monitor_index):
 if __name__ == "__main__":
     print("Scraper started in standalone mode")
     scheduler = BlockingScheduler()
-    scheduler.add_job(job_wrapper, 'interval', seconds=10)
+    # 테스트용: 10초마다 실행
+    # scheduler.add_job(job_wrapper, 'interval', seconds=10)
     # 운영용: 평일 9-19시 10분마다 실행
-    # scheduler.add_job(job_wrapper, 'cron', day_of_week='mon-fri', hour='9-19', minute='*/10')
+    scheduler.add_job(job_wrapper, 'cron', day_of_week='mon-fri', hour='9-19', minute='*/10')
     
     try:
         scheduler.start()
