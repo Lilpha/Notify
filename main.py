@@ -314,29 +314,48 @@ async def lastcheck(interaction: discord.Interaction):
     app_commands.Choice(name="학생생활관", value="dorm")
 ])
 async def forcescan(interaction: discord.Interaction, site: app_commands.Choice[str] = None):
-    await interaction.response.defer(ephemeral=True)
+    """강제 스캔 - 즉시 응답하고 백그라운드 실행"""
+    logger.info(f"User {interaction.user} requested force scan for site: {site.value if site else 'all'}")
+    
+    # 즉시 응답 (타임아웃 방지)
+    await interaction.response.send_message("🔍 스캔을 시작합니다... (완료되면 알려드립니다)", ephemeral=True)
     
     try:
         from scraper import monitors, force_scan_single, job_wrapper
         
-        if site and site.value != "all":
-            # 특정 사이트만 체크 (비동기 실행)
-            site_map = {"sw": 0, "hlsw": 1, "dorm": 2}
-            if site.value in site_map:
-                # 동기 함수를 executor에서 실행
-                result = await asyncio.get_event_loop().run_in_executor(
-                    None, force_scan_single, site_map[site.value]
+        def run_scan_task():
+            """백그라운드에서 스캔 실행"""
+            try:
+                if site and site.value != "all":
+                    site_map = {"sw": 0, "hlsw": 1, "dorm": 2}
+                    if site.value in site_map:
+                        logger.info(f"Starting force scan for {site.name}")
+                        result = force_scan_single(site_map[site.value])
+                        # 완료 메시지 전송
+                        asyncio.run_coroutine_threadsafe(
+                            interaction.followup.send(f"✅ {site.name} 스캔 완료!\n```{result}```", ephemeral=True),
+                            client.loop
+                        )
+                else:
+                    logger.info("Starting force scan for all sites")
+                    job_wrapper()
+                    asyncio.run_coroutine_threadsafe(
+                        interaction.followup.send("✅ 전체 사이트 스캔 완료!", ephemeral=True),
+                        client.loop
+                    )
+            except Exception as e:
+                logger.error(f"Background scan error: {e}", exc_info=True)
+                asyncio.run_coroutine_threadsafe(
+                    interaction.followup.send(f"❌ 스캔 중 오류: {str(e)[:200]}", ephemeral=True),
+                    client.loop
                 )
-                await interaction.followup.send(f"{site.name} 체크 완료!\n{result}", ephemeral=True)
-            else:
-                await interaction.followup.send("잘못된 사이트 선택", ephemeral=True)
-        else:
-            # 전체 사이트 체크 (비동기 실행)
-            await asyncio.get_event_loop().run_in_executor(None, job_wrapper)
-            await interaction.followup.send("전체 사이트 체크 완료!", ephemeral=True)
+        
+        # 백그라운드 스레드로 실행
+        Thread(target=run_scan_task, daemon=True).start()
+        
     except Exception as e:
-        logger.error(f"Force scan error: {e}", exc_info=True)
-        await interaction.followup.send(f"체크 중 오류 발생: {e}", ephemeral=True)
+        logger.error(f"Force scan setup error: {e}", exc_info=True)
+        await interaction.followup.send(f"❌ 스캔 시작 실패: {e}", ephemeral=True)
 
 @client.tree.command(name="stats", description="공지사항 전송 통계를 확인합니다")
 async def stats_command(interaction: discord.Interaction):

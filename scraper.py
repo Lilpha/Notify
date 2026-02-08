@@ -23,8 +23,25 @@ class NoticeMonitor:
         self.options.add_argument('--headless')
         self.options.add_argument('--no-sandbox')
         self.options.add_argument('--disable-dev-shm-usage')
+        self.options.add_argument('--disable-gpu')
+        self.options.add_argument('--disable-software-rasterizer')
         self.options.add_argument('--disable-blink-features=AutomationControlled')
+        self.options.add_argument('--disable-extensions')
+        self.options.add_argument('--disable-infobars')
+        self.options.add_argument('--single-process')  # 라즈베리파이 메모리 절약
+        self.options.add_argument('--disable-application-cache')
+        self.options.add_argument('--disk-cache-size=0')
         self.options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+        
+        # 페이지 로드 전략: eager = DOM만 로드 (이미지/CSS 기다리지 않음)
+        self.options.page_load_strategy = 'eager'
+        
+        # 이미지 로딩 비활성화 (속도 향상)
+        prefs = {
+            'profile.managed_default_content_settings.images': 2,
+            'profile.default_content_setting_values.notifications': 2,
+        }
+        self.options.add_experimental_option('prefs', prefs)
         self.options.add_experimental_option("excludeSwitches", ["enable-automation"])
         self.options.add_experimental_option('useAutomationExtension', False)
     
@@ -83,10 +100,15 @@ class NoticeMonitor:
         driver = self.create_driver()
         new_notices = []
         try:
+            # 페이지 로드 타임아웃 설정 (라즈베리파이 고려)
+            driver.set_page_load_timeout(60)  # 60초로 증가
+            driver.set_script_timeout(30)
+            
             logger.debug(f"[{self.site_name}] Accessing {self.url}")
             driver.get(self.url)
             
-            wait = WebDriverWait(driver, 15)
+            # WebDriverWait 타임아웃도 증가
+            wait = WebDriverWait(driver, 30)
             wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "table.board-table tbody tr:not(.notice)")))
             
             rows = driver.find_elements(By.CSS_SELECTOR, "table.board-table tbody tr:not(.notice)")
