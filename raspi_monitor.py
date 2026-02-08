@@ -108,7 +108,10 @@ def get_raspi_info():
             result = subprocess.run(['vcgencmd', 'measure_clock', 'arm'], 
                                   capture_output=True, text=True, timeout=2)
             if result.returncode == 0:
-                clock = result.stdout.strip().replace("frequency(45)=", "")
+                clock = result.stdout.strip()
+                # frequency(48)=600062000 형식에서 숫자만 추출
+                if '=' in clock:
+                    clock = clock.split('=')[1]
                 info['clock_mhz'] = int(clock) / 1000000
                 
         except (subprocess.TimeoutExpired, FileNotFoundError) as e:

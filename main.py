@@ -320,18 +320,22 @@ async def forcescan(interaction: discord.Interaction, site: app_commands.Choice[
         from scraper import monitors, force_scan_single, job_wrapper
         
         if site and site.value != "all":
-            # 특정 사이트만 체크
+            # 특정 사이트만 체크 (비동기 실행)
             site_map = {"sw": 0, "hlsw": 1, "dorm": 2}
             if site.value in site_map:
-                result = force_scan_single(site_map[site.value])
+                # 동기 함수를 executor에서 실행
+                result = await asyncio.get_event_loop().run_in_executor(
+                    None, force_scan_single, site_map[site.value]
+                )
                 await interaction.followup.send(f"{site.name} 체크 완료!\n{result}", ephemeral=True)
             else:
                 await interaction.followup.send("잘못된 사이트 선택", ephemeral=True)
         else:
-            # 전체 사이트 체크
-            job_wrapper()
+            # 전체 사이트 체크 (비동기 실행)
+            await asyncio.get_event_loop().run_in_executor(None, job_wrapper)
             await interaction.followup.send("전체 사이트 체크 완료!", ephemeral=True)
     except Exception as e:
+        logger.error(f"Force scan error: {e}", exc_info=True)
         await interaction.followup.send(f"체크 중 오류 발생: {e}", ephemeral=True)
 
 @client.tree.command(name="stats", description="공지사항 전송 통계를 확인합니다")

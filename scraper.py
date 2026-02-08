@@ -1,8 +1,10 @@
 import time
 import os
+import platform
 from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -25,6 +27,42 @@ class NoticeMonitor:
         self.options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
         self.options.add_experimental_option("excludeSwitches", ["enable-automation"])
         self.options.add_experimental_option('useAutomationExtension', False)
+    
+    def create_driver(self):
+        """크롬/크로미움 드라이버 생성 (라즈베리파이 지원)"""
+        # 라즈베리파이 감지
+        is_raspberry_pi = platform.machine().startswith('arm') or platform.machine().startswith('aarch')
+        
+        if is_raspberry_pi:
+            logger.info(f"[{self.site_name}] Detected Raspberry Pi, using Chromium")
+            
+            # Chromium 바이너리 경로 찾기
+            chromium_paths = [
+                '/usr/bin/chromium-browser',
+                '/usr/bin/chromium',
+            ]
+            for path in chromium_paths:
+                if os.path.exists(path):
+                    self.options.binary_location = path
+                    logger.info(f"[{self.site_name}] Using Chromium at: {path}")
+                    break
+            
+            # ChromeDriver 경로 찾기
+            chromedriver_paths = [
+                '/usr/bin/chromedriver',
+                '/usr/lib/chromium-browser/chromedriver',
+            ]
+            for driver_path in chromedriver_paths:
+                if os.path.exists(driver_path):
+                    logger.info(f"[{self.site_name}] Using ChromeDriver at: {driver_path}")
+                    service = ChromeService(executable_path=driver_path)
+                    return webdriver.Chrome(service=service, options=self.options)
+            
+            # ChromeDriver를 찾지 못한 경우 기본 경로 시도
+            logger.warning(f"[{self.site_name}] ChromeDriver not found in standard paths, trying default")
+        
+        # Windows/Mac 또는 ChromeDriver를 찾지 못한 경우
+        return webdriver.Chrome(options=self.options)
 
     def get_last_id(self):
         if os.path.exists(self.id_file):
@@ -42,7 +80,7 @@ class NoticeMonitor:
         logger.info(f"[{self.site_name}] Updated last ID to: {notice_id}")
 
     def scrape_new_notices(self, last_id):
-        driver = webdriver.Chrome(options=self.options)
+        driver = self.create_driver()
         new_notices = []
         try:
             logger.debug(f"[{self.site_name}] Accessing {self.url}")
