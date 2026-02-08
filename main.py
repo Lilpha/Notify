@@ -35,6 +35,9 @@ DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 GUILD_ID = int(os.getenv('GUILD_ID'))
 CONFIG_FILE = "config.json"
 
+# 스크래퍼 실행 주기 설정 (초 단위)
+SCAN_INTERVAL_SECONDS = 300  # 300초마다 스크래핑
+
 # 환경 변수 검증
 if not DISCORD_TOKEN:
     logger.error("DISCORD_TOKEN not found in .env file")
@@ -333,20 +336,20 @@ async def forcescan(interaction: discord.Interaction, site: app_commands.Choice[
                         result = force_scan_single(site_map[site.value])
                         # 완료 메시지 전송
                         asyncio.run_coroutine_threadsafe(
-                            interaction.followup.send(f"✅ {site.name} 스캔 완료!\n```{result}```", ephemeral=True),
+                            interaction.followup.send(f"{site.name} 스캔 완료!\n```{result}```", ephemeral=True),
                             client.loop
                         )
                 else:
                     logger.info("Starting force scan for all sites")
                     job_wrapper()
                     asyncio.run_coroutine_threadsafe(
-                        interaction.followup.send("✅ 전체 사이트 스캔 완료!", ephemeral=True),
+                        interaction.followup.send("전체 사이트 스캔 완료!", ephemeral=True),
                         client.loop
                     )
             except Exception as e:
                 logger.error(f"Background scan error: {e}", exc_info=True)
                 asyncio.run_coroutine_threadsafe(
-                    interaction.followup.send(f"❌ 스캔 중 오류: {str(e)[:200]}", ephemeral=True),
+                    interaction.followup.send(f"스캔 중 오류: {str(e)[:200]}", ephemeral=True),
                     client.loop
                 )
         
@@ -355,7 +358,7 @@ async def forcescan(interaction: discord.Interaction, site: app_commands.Choice[
         
     except Exception as e:
         logger.error(f"Force scan setup error: {e}", exc_info=True)
-        await interaction.followup.send(f"❌ 스캔 시작 실패: {e}", ephemeral=True)
+        await interaction.followup.send(f"스캔 시작 실패: {e}", ephemeral=True)
 
 @client.tree.command(name="stats", description="공지사항 전송 통계를 확인합니다")
 async def stats_command(interaction: discord.Interaction):
@@ -429,6 +432,95 @@ async def ping(interaction: discord.Interaction):
     embed.add_field(name="상태", value=status, inline=False)
     
     await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@client.tree.command(name="scaninterval", description="현재 스캔 주기를 확인합니다")
+async def scaninterval(interaction: discord.Interaction):
+    global SCAN_INTERVAL_SECONDS
+    
+    minutes = SCAN_INTERVAL_SECONDS // 60
+    seconds = SCAN_INTERVAL_SECONDS % 60
+    
+    if minutes > 0:
+        interval_text = f"{minutes}분 {seconds}초" if seconds > 0 else f"{minutes}분"
+    else:
+        interval_text = f"{seconds}초"
+    
+    embed = discord.Embed(
+        title="스캔 주기 설정",
+        color=discord.Color.blue()
+    )
+    embed.add_field(name="현재 주기", value=interval_text, inline=True)
+    embed.add_field(name="초 단위", value=f"{SCAN_INTERVAL_SECONDS}초", inline=True)
+    embed.set_footer(text="변경하려면 /setscaninterval 명령어를 사용하세요")
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@client.tree.command(name="setscaninterval", description="스캔 주기를 변경합니다")
+@app_commands.describe(
+    seconds="스캔 주기 (초 단위, 30~3600)"
+)
+async def setscaninterval(interaction: discord.Interaction, seconds: int):
+    global SCAN_INTERVAL_SECONDS, scraper_scheduler, next_scan_time
+    
+    logger.info(f"User {interaction.user} requested scan interval change to {seconds}s")
+    
+    # 유효성 검사
+    if seconds < 30:
+        await interaction.response.send_message("스캔 주기는 최소 30초 이상이어야 합니다.", ephemeral=True)
+        return
+    if seconds > 3600:
+        await interaction.response.send_message("스캔 주기는 최대 3600초(1시간) 이하여야 합니다.", ephemeral=True)
+        return
+    
+    await interaction.response.defer(ephemeral=True)
+    
+    try:
+        old_interval = SCAN_INTERVAL_SECONDS
+        SCAN_INTERVAL_SECONDS = seconds
+        
+        # 스케줄러 재시작
+        if scraper_scheduler and scraper_scheduler.running:
+            from scraper import job_wrapper
+            
+            # 기존 작업 제거
+            scraper_scheduler.remove_all_jobs()
+            
+            # 새 주기로 작업 추가
+            scraper_scheduler.add_job(
+                job_wrapper,
+                'interval',
+                seconds=SCAN_INTERVAL_SECONDS,
+                max_instances=1,
+                coalesce=True
+            )
+            
+            # 다음 스캔 시간 업데이트
+            next_scan_time = datetime.now() + timedelta(seconds=SCAN_INTERVAL_SECONDS)
+            
+            logger.info(f"Scan interval changed: {old_interval}s -> {SCAN_INTERVAL_SECONDS}s")
+            
+            minutes = seconds // 60
+            sec = seconds % 60
+            if minutes > 0:
+                interval_text = f"{minutes}분 {sec}초" if sec > 0 else f"{minutes}분"
+            else:
+                interval_text = f"{sec}초"
+            
+            embed = discord.Embed(
+                title="스캔 주기 변경 완료",
+                color=discord.Color.green()
+            )
+            embed.add_field(name="이전 주기", value=f"{old_interval}초", inline=True)
+            embed.add_field(name="새 주기", value=interval_text, inline=True)
+            embed.add_field(name="다음 스캔", value=next_scan_time.strftime("%H:%M:%S"), inline=False)
+            
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        else:
+            await interaction.followup.send("스크래퍼가 실행 중이 아닙니다.", ephemeral=True)
+    
+    except Exception as e:
+        logger.error(f"Failed to change scan interval: {e}", exc_info=True)
+        await interaction.followup.send(f"주기 변경 실패: {e}", ephemeral=True)
 
 # ============================================
 # 라즈베리파이 시스템 모니터링 커맨드
@@ -658,25 +750,25 @@ if __name__ == "__main__":
         def update_scan_time():
             global last_scan_time, next_scan_time
             last_scan_time = datetime.now()
-            next_scan_time = last_scan_time + timedelta(seconds=60)
+            next_scan_time = last_scan_time + timedelta(seconds=SCAN_INTERVAL_SECONDS)
         
         set_time_tracker(update_scan_time)
         set_error_logger(add_error_log)
         
         scraper_scheduler = BackgroundScheduler()
-        # 간격을 60초로 늘리고, max_instances 설정
+        # 주기적으로 공지사항 체크
         scraper_scheduler.add_job(
             job_wrapper, 
             'interval', 
-            seconds=300,
+            seconds=SCAN_INTERVAL_SECONDS,
             max_instances=1,
             coalesce=True  # 밀린 작업은 하나로 합침
         )
         scraper_scheduler.start()
-        print("[Scraper] Checking every 60 seconds...")
+        print(f"[Scraper] Checking every {SCAN_INTERVAL_SECONDS} seconds...")
         
         # 다음 스캔 시간 초기화
-        next_scan_time = datetime.now() + timedelta(seconds=60)
+        next_scan_time = datetime.now() + timedelta(seconds=SCAN_INTERVAL_SECONDS)
         
         # 스레드가 계속 실행되도록 대기
         try:
