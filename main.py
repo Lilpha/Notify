@@ -160,24 +160,29 @@ class NoticeBot(discord.Client):
             return
         
         logger.debug(f"Sending to channel: {channel.name} (ID: {channel.id})")
-
         if self.config["send_individually"]:
-            # 방식 1: 공지 하나당 메시지 1개
-            for notice in notices:
-                site_name = notice.get('site', '알 수 없음')
-                embed = discord.Embed(
-                    title=f"새 공지사항 #{notice['id']}",
-                    description=notice['title'],
-                    color=discord.Color.blue(),
-                    url=notice['link']
-                )
-                embed.add_field(name="사이트", value=site_name, inline=True)
-                embed.add_field(name="작성일", value=notice['date'], inline=True)
-                embed.add_field(name="번호", value=str(notice['id']), inline=True)
-                await channel.send(embed=embed)
-                await asyncio.sleep(0.5)  # API 제한 방지
+                    # 방식 1: 공지 하나당 메시지 1개
+                    for notice in notices:
+                        site_name = notice.get('site', '알 수 없음')
+                        
+                        # 본문 내용 요약 (디스코드 Embed 필드 글자수 제한: 1024자)
+                        content = notice.get('content', '본문 내용이 없습니다.')
+                        if len(content) > 300:
+                            content = content[:300] + "\n\n...(이하 생략)"
+
+                        embed = discord.Embed(
+                            title=f"새 공지사항 #{notice['id']}",
+                            description=f"**{notice['title']}**\n\n{content}",
+                            color=discord.Color.blue(),
+                            url=notice['link']
+                        )
+                        embed.add_field(name="사이트", value=site_name, inline=True)
+                        embed.add_field(name="작성일", value=notice['date'], inline=True)
+                        embed.add_field(name="번호", value=str(notice['id']), inline=True)
+                        await channel.send(embed=embed)
+                        await asyncio.sleep(0.5)  # API 제한 방지
         else:
-            # 방식 2: 여러 공지를 한번에 통합
+            # 방식 2: 여러 공지를 한번에 통합 (통합 모드일 땐 본문 생략)
             embed = discord.Embed(
                 title=f"새 공지사항 {len(notices)}개",
                 color=discord.Color.green()
@@ -192,7 +197,6 @@ class NoticeBot(discord.Client):
                 )
             
             await channel.send(embed=embed)
-
 # Bot 인스턴스 생성
 client = NoticeBot()
 

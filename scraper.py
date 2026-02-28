@@ -1,13 +1,9 @@
 import time
 import os
-import platform
+import requests
+from bs4 import BeautifulSoup
+from urllib.parse import urljoin
 from datetime import datetime
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service as ChromeService
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from apscheduler.schedulers.blocking import BlockingScheduler
 from logger_config import get_logger
 
@@ -19,67 +15,11 @@ class NoticeMonitor:
         self.site_name = site_name
         self.url = url
         self.id_file = id_file
-        self.options = Options()
-        self.options.add_argument('--headless')
-        self.options.add_argument('--no-sandbox')
-        self.options.add_argument('--disable-dev-shm-usage')
-        self.options.add_argument('--disable-gpu')
-        self.options.add_argument('--disable-software-rasterizer')
-        self.options.add_argument('--disable-blink-features=AutomationControlled')
-        self.options.add_argument('--disable-extensions')
-        self.options.add_argument('--disable-infobars')
-        self.options.add_argument('--single-process')  # 라즈베리파이 메모리 절약
-        self.options.add_argument('--disable-application-cache')
-        self.options.add_argument('--disk-cache-size=0')
-        self.options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
-        
-        # 페이지 로드 전략: eager = DOM만 로드 (이미지/CSS 기다리지 않음)
-        self.options.page_load_strategy = 'eager'
-        
-        # 이미지 로딩 비활성화 (속도 향상)
-        prefs = {
-            'profile.managed_default_content_settings.images': 2,
-            'profile.default_content_setting_values.notifications': 2,
+        self.headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7'
         }
-        self.options.add_experimental_option('prefs', prefs)
-        self.options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        self.options.add_experimental_option('useAutomationExtension', False)
-    
-    def create_driver(self):
-        """크롬/크로미움 드라이버 생성 (라즈베리파이 지원)"""
-        # 라즈베리파이 감지
-        is_raspberry_pi = platform.machine().startswith('arm') or platform.machine().startswith('aarch')
-        
-        if is_raspberry_pi:
-            logger.info(f"[{self.site_name}] Detected Raspberry Pi, using Chromium")
-            
-            # Chromium 바이너리 경로 찾기
-            chromium_paths = [
-                '/usr/bin/chromium-browser',
-                '/usr/bin/chromium',
-            ]
-            for path in chromium_paths:
-                if os.path.exists(path):
-                    self.options.binary_location = path
-                    logger.info(f"[{self.site_name}] Using Chromium at: {path}")
-                    break
-            
-            # ChromeDriver 경로 찾기
-            chromedriver_paths = [
-                '/usr/bin/chromedriver',
-                '/usr/lib/chromium-browser/chromedriver',
-            ]
-            for driver_path in chromedriver_paths:
-                if os.path.exists(driver_path):
-                    logger.info(f"[{self.site_name}] Using ChromeDriver at: {driver_path}")
-                    service = ChromeService(executable_path=driver_path)
-                    return webdriver.Chrome(service=service, options=self.options)
-            
-            # ChromeDriver를 찾지 못한 경우 기본 경로 시도
-            logger.warning(f"[{self.site_name}] ChromeDriver not found in standard paths, trying default")
-        
-        # Windows/Mac 또는 ChromeDriver를 찾지 못한 경우
-        return webdriver.Chrome(options=self.options)
 
     def get_last_id(self):
         if os.path.exists(self.id_file):
@@ -96,74 +36,107 @@ class NoticeMonitor:
             f.write(str(notice_id))
         logger.info(f"[{self.site_name}] Updated last ID to: {notice_id}")
 
+    def get_notice_content(self, detail_url):
+        """개별 게시물 페이지에 접속하여 본문 텍스트를 추출하는 함수"""
+        try:
+            time.sleep(0.5)  # 서버 부하 방지를 위한 짧은 대기
+            response = requests.get(detail_url, headers=self.headers, timeout=10)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, 'html.parser')
+
+            # 한림대 게시판 및 일반적인 게시판의 본문 영역 CSS 클래스 후보군
+            content_selectors = [
+                ".board-contents", ".b-v-con", ".view-con", 
+                ".board-view", ".td-content", ".data-view"
+            ]
+            
+            content_area = None
+            for selector in content_selectors:
+                content_area = soup.select_one(selector)
+                if content_area:
+                    break
+            
+            if content_area:
+                # 불필요한 스크립트나 스타일 태그 제거
+                for script in content_area(["script", "style"]):
+                    script.decompose()
+                text = content_area.get_text(separator='\n', strip=True)
+                return text if text else "본문 내용이 비어있습니다."
+            else:
+                return "본문 영역을 찾을 수 없습니다. (웹사이트 구조 확인 필요)"
+
+        except Exception as e:
+            logger.error(f"[{self.site_name}] 본문 파싱 에러 ({detail_url}): {e}")
+            return f"본문을 불러오는 중 에러가 발생했습니다."
+
     def scrape_new_notices(self, last_id):
-        driver = self.create_driver()
         new_notices = []
         try:
-            # 페이지 로드 타임아웃 설정 (라즈베리파이 고려)
-            driver.set_page_load_timeout(60)  # 60초로 증가
-            driver.set_script_timeout(30)
-            
             logger.debug(f"[{self.site_name}] Accessing {self.url}")
-            driver.get(self.url)
             
-            # WebDriverWait 타임아웃도 증가
-            wait = WebDriverWait(driver, 30)
-            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "table.board-table tbody tr:not(.notice)")))
+            # 1. 목록 페이지 요청
+            response = requests.get(self.url, headers=self.headers, timeout=15)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, 'html.parser')
             
-            rows = driver.find_elements(By.CSS_SELECTOR, "table.board-table tbody tr:not(.notice)")
+            # 2. 공지사항이 아닌 일반 게시물 행 추출
+            rows = soup.select("table.board-table tbody tr:not(.notice)")
             
-            # 첫 번째 행(최신 공지)의 ID 확인
-            if rows and last_id > 0:
-                try:
-                    first_row = rows[0]
-                    first_num_elem = first_row.find_element(By.CLASS_NAME, "td-num")
+            if not rows:
+                logger.warning(f"[{self.site_name}] 게시물을 찾을 수 없습니다.")
+                return []
+
+            # 3. 최신 ID 리셋 확인
+            if last_id > 0:
+                first_row = rows[0]
+                first_num_elem = first_row.select_one(".td-num")
+                if first_num_elem:
                     first_num_text = first_num_elem.text.strip()
-                    if not first_num_text:
-                        first_num_text = first_num_elem.get_attribute('textContent').strip()
-                    
                     if first_num_text.isdigit():
                         current_latest_id = int(first_num_text)
-                        # 현재 사이트의 최신 ID가 저장된 last_id보다 작으면
-                        # (사이트가 리셋되었거나 잘못된 last_id)
                         if current_latest_id < last_id:
                             logger.warning(f"[{self.site_name}] ID reset detected: {last_id} -> {current_latest_id}")
-                            print(f"[{self.site_name}] ID reset detected: {last_id} -> {current_latest_id}")
                             self.set_last_id(current_latest_id)
-                            return []  # 이번엔 새 공지 없음으로 처리
-                except Exception as e:
-                    logger.error(f"[{self.site_name}] Failed to check latest ID: {e}")
-                    print(f"[{self.site_name}] Failed to check latest ID: {e}")
-            
+                            return []
+
+            # 4. 각 행 파싱
             for row in rows:
-                try:
-                    num_elem = row.find_element(By.CLASS_NAME, "td-num")
-                    num_text = num_elem.text.strip()
-                    
-                    if not num_text:
-                        num_text = num_elem.get_attribute('textContent').strip()
-                    
-                    if not num_text.isdigit():
-                        continue
-                        
-                    notice_id = int(num_text)
-                    
-                    if notice_id > last_id:
-                        title = row.find_element(By.CSS_SELECTOR, ".td-title strong").text.strip()
-                        link = row.find_element(By.CSS_SELECTOR, ".td-title a").get_attribute("href")
-                        date = row.find_element(By.CLASS_NAME, "td-date").text.strip()
-                        new_notices.append({
-                            "id": notice_id, 
-                            "title": title, 
-                            "link": link, 
-                            "date": date,
-                            "site": self.site_name  # 사이트 정보 추가
-                        })
-                    else:
-                        break
-                except Exception as row_e:
-                    print(f"row parsing error: {row_e}")
+                num_elem = row.select_one(".td-num")
+                if not num_elem:
                     continue
+                    
+                num_text = num_elem.text.strip()
+                if not num_text.isdigit():
+                    continue
+
+                notice_id = int(num_text)
+
+                if notice_id > last_id:
+                    title_elem = row.select_one(".td-title strong")
+                    title = title_elem.text.strip() if title_elem else "제목 없음"
+                    
+                    link_elem = row.select_one(".td-title a")
+                    raw_link = link_elem.get("href") if link_elem else ""
+                    full_link = urljoin(self.url, raw_link)
+                    
+                    date_elem = row.select_one(".td-date")
+                    date = date_elem.text.strip() if date_elem else ""
+                    
+                    # 새 글인 경우 본문 내용까지 추가로 가져오기
+                    logger.info(f"[{self.site_name}] 새 글 발견! 본문 파싱 중... ({notice_id})")
+                    content_text = self.get_notice_content(full_link)
+
+                    new_notices.append({
+                        "id": notice_id,
+                        "title": title,
+                        "link": full_link,
+                        "date": date,
+                        "site": self.site_name,
+                        "content": content_text  # 본문 데이터 추가!
+                    })
+                else:
+                    break  # 이미 확인한 ID면 탐색 중지
+
             new_notices.sort(key=lambda x: x['id'])
             if new_notices:
                 logger.info(f"[{self.site_name}] Found {len(new_notices)} new notices")
@@ -171,13 +144,7 @@ class NoticeMonitor:
 
         except Exception as e:
             logger.error(f"[{self.site_name}] Error during scraping: {e}", exc_info=True)
-            print(f"[{self.site_name}] Error during scraping: {e}")
             return []
-        finally:
-            try:
-                driver.quit()
-            except:
-                pass  # 드라이버 종료 실패는 무시
 
     def check_for_event(self):
         last_id = self.get_last_id()
@@ -190,7 +157,6 @@ class NoticeMonitor:
             
             for notice in new_notices:
                 logger.info(f"[{self.site_name}] New event: {notice['title']}")
-                print(f"[{self.site_name}] New event: {notice['title']}")
             return new_notices
             
         return []
@@ -216,23 +182,19 @@ monitors = [
 
 scheduler = BlockingScheduler()
 
-# Discord 전송 콜백 함수 (main.py에서 설정)
 notice_callback = None
 time_tracker_callback = None
 error_logger_callback = None
 
 def set_notice_callback(callback):
-    """main.py에서 콜백 함수를 설정"""
     global notice_callback
     notice_callback = callback
 
 def set_time_tracker(callback):
-    """시간 추적 콜백 설정"""
     global time_tracker_callback
     time_tracker_callback = callback
 
 def set_error_logger(callback):
-    """에러 로깅 콜백 설정"""
     global error_logger_callback
     error_logger_callback = callback
 
@@ -242,42 +204,31 @@ def job_wrapper():
     
     logger.info("Starting scheduled job_wrapper")
     
-    # 스캔 시작 시간 기록
     if time_tracker_callback:
         time_tracker_callback()
     
-    # 모든 사이트 확인
     for i, monitor in enumerate(monitors):
         try:
-            # 첫 번째 사이트가 아니면 3초 대기 (IP 차단 방지)
             if i > 0:
-                time.sleep(3)
+                time.sleep(2)
             
             event_data = monitor.check_for_event()
             if event_data:
                 all_notices.extend(event_data)
         except Exception as e:
             error_msg = str(e)
-            print(f"[{monitor.site_name}] Error: {error_msg}")
-            # 에러 로깅
             if error_logger_callback:
                 error_logger_callback(monitor.site_name, error_msg)
-            # 에러 발생 시 5초 대기 후 다음 사이트로
-            time.sleep(5)
+            time.sleep(3)
     
-    # 새 공지가 있으면 Discord 전송
     if all_notices and notice_callback:
         try:
             logger.info(f"Sending {len(all_notices)} notices to Discord")
             notice_callback(all_notices)
         except Exception as e:
             logger.error(f"Failed to send to Discord: {e}", exc_info=True)
-            print(f"Failed to send to Discord: {e}")
-    
-    logger.info(f"Job completed, found {len(all_notices)} new notices")
 
 def force_scan_single(monitor_index):
-    """특정 사이트만 강제로 체크"""
     if monitor_index < 0 or monitor_index >= len(monitors):
         return "잘못된 사이트 인덱스"
     
@@ -296,17 +247,11 @@ def force_scan_single(monitor_index):
             error_logger_callback(monitor.site_name, error_msg)
         return f"에러 발생: {error_msg}"
 
-# 단독 실행 시 (테스트용)
 if __name__ == "__main__":
     print("Scraper started in standalone mode")
     scheduler = BlockingScheduler()
-    # 테스트용: 10초마다 실행
-    # scheduler.add_job(job_wrapper, 'interval', seconds=10)
-    # 운영용: 평일 9-19시 10분마다 실행
     scheduler.add_job(job_wrapper, 'cron', day_of_week='mon-fri', hour='9-19', minute='*/10')
-    
     try:
         scheduler.start()
     except (KeyboardInterrupt, SystemExit):
         print("Scraper stopped")
-        scheduler.shutdown()
