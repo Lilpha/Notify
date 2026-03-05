@@ -74,10 +74,15 @@ def load_config():
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             config = json.load(f)
+            # 기존 단일 channel_id를 channel_ids 리스트로 변환 (호환성)
+            if "channel_id" in config and "channel_ids" not in config:
+                config["channel_ids"] = [config["channel_id"]]
+                del config["channel_id"]
+                save_config(config)
             logger.debug(f"Config loaded: {config}")
             return config
     logger.warning("Config file not found, using defaults")
-    return {"send_individually": False, "channel_id": int(default_channel)}
+    return {"send_individually": False, "channel_ids": [int(default_channel)]}
 
 def save_config(config):
     """설정 파일 저장"""
@@ -152,51 +157,63 @@ class NoticeBot(discord.Client):
             logger.info(f"Notice from {site}: [{notice['id']}] {notice['title']}")
         
         self.config = load_config()
-        channel = self.get_channel(self.config["channel_id"])
+        channel_ids = self.config.get("channel_ids", [])
         
-        if not channel:
-            logger.error(f"Channel {self.config['channel_id']} not found")
-            print(f"[Error] Channel {self.config['channel_id']} not found")
+        if not channel_ids:
+            logger.error("No channel IDs configured")
+            print("[Error] No channel IDs configured")
             return
         
-        logger.debug(f"Sending to channel: {channel.name} (ID: {channel.id})")
-        if self.config["send_individually"]:
-                    # 방식 1: 공지 하나당 메시지 1개
-                    for notice in notices:
-                        site_name = notice.get('site', '알 수 없음')
-                        
-                        # 본문 내용 요약 (디스코드 Embed 필드 글자수 제한: 1024자)
-                        content = notice.get('content', '본문 내용이 없습니다.')
-                        if len(content) > 300:
-                            content = content[:300] + "\n\n...(이하 생략)"
+        # 각 채널에 공지 전송
+        for channel_id in channel_ids:
+            channel = self.get_channel(channel_id)
+            
+            if not channel:
+                logger.error(f"Channel {channel_id} not found")
+                print(f"[Error] Channel {channel_id} not found")
+                continue
+            
+            logger.debug(f"Sending to channel: {channel.name} (ID: {channel.id})")
+            
+            if self.config["send_individually"]:
+                # 방식 1: 공지 하나당 메시지 1개
+                for notice in notices:
+                    site_name = notice.get('site', '알 수 없음')
+                    
+                    # 본문 내용 요약 (디스코드 Embed 필드 글자수 제한: 1024자)
+                    content = notice.get('content', '본문 내용이 없습니다.')
+                    if len(content) > 300:
+                        content = content[:300] + "\n\n...(이하 생략)"
 
-                        embed = discord.Embed(
-                            title=f"새 공지사항 #{notice['id']}",
-                            description=f"**{notice['title']}**\n\n{content}",
-                            color=discord.Color.blue(),
-                            url=notice['link']
-                        )
-                        embed.add_field(name="사이트", value=site_name, inline=True)
-                        embed.add_field(name="작성일", value=notice['date'], inline=True)
-                        embed.add_field(name="번호", value=str(notice['id']), inline=True)
-                        await channel.send(embed=embed)
-                        await asyncio.sleep(0.5)  # API 제한 방지
-        else:
-            # 방식 2: 여러 공지를 한번에 통합 (통합 모드일 땐 본문 생략)
-            embed = discord.Embed(
-                title=f"새 공지사항 {len(notices)}개",
-                color=discord.Color.green()
-            )
-            
-            for notice in notices:
-                site_name = notice.get('site', '알 수 없음')
-                embed.add_field(
-                    name=f"[{site_name}] #{notice['id']} - {notice['date']}",
-                    value=f"[{notice['title']}]({notice['link']})",
-                    inline=False
+                    embed = discord.Embed(
+                        title=f"새 공지사항 #{notice['id']}",
+                        description=f"**{notice['title']}**\n\n{content}",
+                        color=discord.Color.blue(),
+                        url=notice['link']
+                    )
+                    embed.add_field(name="사이트", value=site_name, inline=True)
+                    embed.add_field(name="작성일", value=notice['date'], inline=True)
+                    embed.add_field(name="번호", value=str(notice['id']), inline=True)
+                    await channel.send(embed=embed)
+                    await asyncio.sleep(0.5)  # API 제한 방지
+            else:
+                # 방식 2: 여러 공지를 한번에 통합 (통합 모드일 땐 본문 생략)
+                embed = discord.Embed(
+                    title=f"새 공지사항 {len(notices)}개",
+                    color=discord.Color.green()
                 )
+                
+                for notice in notices:
+                    site_name = notice.get('site', '알 수 없음')
+                    embed.add_field(
+                        name=f"[{site_name}] #{notice['id']} - {notice['date']}",
+                        value=f"[{notice['title']}]({notice['link']})",
+                        inline=False
+                    )
+                
+                await channel.send(embed=embed)
             
-            await channel.send(embed=embed)
+            logger.info(f"Notices sent to channel {channel.name} (ID: {channel_id})")
 # Bot 인스턴스 생성
 client = NoticeBot()
 
@@ -234,12 +251,16 @@ async def noticesettings(interaction: discord.Interaction):
     
     mode_text = "개별 전송" if config["send_individually"] else "통합 전송"
     
+    # 여러 채널을 표시
+    channel_ids = config.get("channel_ids", [])
+    channels_text = "\n".join([f"<#{ch_id}>" for ch_id in channel_ids]) if channel_ids else "설정된 채널이 없습니다"
+    
     embed = discord.Embed(
         title="공지 알림 설정",
         color=discord.Color.blue()
     )
     embed.add_field(name="전송 방식", value=mode_text, inline=False)
-    embed.add_field(name="알림 채널", value=f"<#{config['channel_id']}>", inline=False)
+    embed.add_field(name="알림 채널", value=channels_text, inline=False)
     embed.set_footer(text="변경하려면 /noticetype 명령어를 사용하세요")
     
     await interaction.response.send_message(embed=embed, ephemeral=True)
