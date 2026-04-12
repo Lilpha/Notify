@@ -112,8 +112,8 @@ class NoticeMonitor:
                 notice_id = int(num_text)
 
                 if notice_id > last_id:
-                    title_elem = row.select_one(".td-title strong")
-                    title = title_elem.text.strip() if title_elem else "제목 없음"
+                    title_elem = row.select_one(".td-title a")
+                    title = title_elem.get_text(strip=True) if title_elem else "제목 없음"
                     
                     link_elem = row.select_one(".td-title a")
                     raw_link = link_elem.get("href") if link_elem else ""
@@ -177,6 +177,16 @@ monitors = [
         site_name="학생생활관",
         url="https://dorm.hallym.ac.kr/dorm/5150/subview.do",
         id_file="last_id_dorm.txt"
+    ),
+    NoticeMonitor(
+        site_name="일반공지",
+        url="https://sw.hallym.ac.kr/hallym/1136/subview.do",
+        id_file="last_id_hallym_msg.txt"
+    ),
+    NoticeMonitor(
+        site_name="산학협력단",
+        url="https://www.hallym.ac.kr/sanhak/5063/subview.do",
+        id_file="last_id_sanhak.txt"
     )
 ]
 

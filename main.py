@@ -1,4 +1,4 @@
-import discord
+﻿import discord
 import asyncio
 import json
 import os
@@ -10,19 +10,31 @@ import time
 from logger_config import setup_logger, get_logger, get_recent_logs
 from dotenv import load_dotenv
 
-# 라즈베리파이 모니터링 (선택적)
+# 시스템 모니터링 (서버 또는 라즈베리파이)
 try:
-    from raspi_monitor import (
-        get_system_info, get_raspi_info, get_process_info, 
-        get_network_info, format_bytes, is_raspberry_pi
+    from server_monitor import (
+        get_system_info, get_server_info as get_hardware_info, get_process_info,
+        get_network_info, format_bytes, is_linux_server as is_target_os
     )
-    RASPI_AVAILABLE = True
+    MONITOR_AVAILABLE = True
+    MONITOR_TYPE = "Server"
     logger_temp = get_logger("NotifyBot")
-    logger_temp.info("Raspberry Pi monitoring module loaded")
-except ImportError as e:
-    RASPI_AVAILABLE = False
-    logger_temp = get_logger("NotifyBot")
-    logger_temp.warning(f"Raspberry Pi monitoring unavailable: {e}")
+    logger_temp.info("Server monitoring module loaded")
+except ImportError:
+    try:
+        from raspi_monitor import (
+            get_system_info, get_raspi_info as get_hardware_info, get_process_info,
+            get_network_info, format_bytes, is_raspberry_pi as is_target_os
+        )
+        MONITOR_AVAILABLE = True
+        MONITOR_TYPE = "Raspberry Pi"
+        logger_temp = get_logger("NotifyBot")
+        logger_temp.info("Raspberry Pi monitoring module loaded")
+    except ImportError as e:
+        MONITOR_AVAILABLE = False
+        MONITOR_TYPE = "None"
+        logger_temp = get_logger("NotifyBot")
+        logger_temp.warning(f"Monitoring generic/raspi modules unavailable: {e}")
 
 # .env 파일 로드
 load_dotenv()
@@ -36,7 +48,7 @@ GUILD_ID = int(os.getenv('GUILD_ID'))
 CONFIG_FILE = "config.json"
 
 # 스크래퍼 실행 주기 설정 (초 단위)
-SCAN_INTERVAL_SECONDS = 300  # 300초마다 스크래핑
+SCAN_INTERVAL_SECONDS = 15  # 15초마다 스크래핑
 
 # 환경 변수 검증
 if not DISCORD_TOKEN:
@@ -70,7 +82,7 @@ stats = {
 
 def load_config():
     """설정 파일 로드"""
-    default_channel = os.getenv('DEFAULT_CHANNEL_ID', '952828252911706153')
+    default_channel = os.getenv('DEFAULT_CHANNEL_ID', '')
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             config = json.load(f)
@@ -137,20 +149,27 @@ class NoticeBot(discord.Client):
                 traceback.print_exc()
             await asyncio.sleep(1)
     
-    async def send_notices(self, notices):
-        """공지사항을 Discord에 전송"""
-        global stats
-        
-        # 날짜가 바뀌면 오늘 공지 수 초기화
-        today = datetime.now().date()
-        if stats["today_date"] != today:
-            logger.info(f"Date changed: {stats['today_date']} -> {today}, resetting today's count")
-            stats["today_date"] = today
-            stats["today_notices"] = 0
-        
-        # 통계 업데이트
-        stats["total_notices"] += len(notices)
-        stats["today_notices"] += len(notices)
+    def update_daily_stats():
+    """날짜가 바뀌었는지 확인하고 오늘 통계 초기화"""
+    global stats
+    today = datetime.now().date()
+    if stats["today_date"] != today:
+        logger.info(f"Date changed: {stats['today_date']} -> {today}, resetting today's count")
+        stats["today_date"] = today
+        stats["today_notices"] = 0
+        return True
+    return False
+
+async def send_notices(self, notices):
+    """공지사항을 Discord에 전송"""
+    global stats
+    
+    # 날짜 변경 체크 및 초기화
+    update_daily_stats()
+    
+    # 통계 업데이트
+    stats["total_notices"] += len(notices)
+    stats["today_notices"] += len(notices)
         for notice in notices:
             site = notice.get('site', '알 수 없음')
             stats["site_notices"][site] = stats["site_notices"].get(site, 0) + 1
@@ -339,7 +358,9 @@ async def lastcheck(interaction: discord.Interaction):
     app_commands.Choice(name="전체 사이트", value="all"),
     app_commands.Choice(name="소프트웨어학부", value="sw"),
     app_commands.Choice(name="SW중심사업단", value="hlsw"),
-    app_commands.Choice(name="학생생활관", value="dorm")
+    app_commands.Choice(name="학생생활관", value="dorm"),
+    app_commands.Choice(name="일반공지", value="hallym_msg"),
+    app_commands.Choice(name="산학협력단", value="sanhak")
 ])
 async def forcescan(interaction: discord.Interaction, site: app_commands.Choice[str] = None):
     """강제 스캔 - 즉시 응답하고 백그라운드 실행"""
@@ -355,7 +376,13 @@ async def forcescan(interaction: discord.Interaction, site: app_commands.Choice[
             """백그라운드에서 스캔 실행"""
             try:
                 if site and site.value != "all":
-                    site_map = {"sw": 0, "hlsw": 1, "dorm": 2}
+                    site_map = {
+                        "sw": 0, 
+                        "hlsw": 1, 
+                        "dorm": 2, 
+                        "hallym_msg": 3, 
+                        "sanhak": 4
+                    }
                     if site.value in site_map:
                         logger.info(f"Starting force scan for {site.name}")
                         result = force_scan_single(site_map[site.value])
@@ -388,6 +415,9 @@ async def forcescan(interaction: discord.Interaction, site: app_commands.Choice[
 @client.tree.command(name="stats", description="공지사항 전송 통계를 확인합니다")
 async def stats_command(interaction: discord.Interaction):
     global stats
+    
+    # 날짜 변경 체크 및 초기화 (실시간 반영)
+    update_daily_stats()
     
     embed = discord.Embed(
         title="공지사항 전송 통계",
@@ -551,7 +581,7 @@ async def setscaninterval(interaction: discord.Interaction, seconds: int):
 # 라즈베리파이 시스템 모니터링 커맨드
 # ============================================
 
-if RASPI_AVAILABLE:
+if MONITOR_AVAILABLE:
     @client.tree.command(name="system", description="시스템 상태를 확인합니다")
     async def system(interaction: discord.Interaction):
         logger.info(f"User {interaction.user} requested system info")
@@ -610,19 +640,19 @@ if RASPI_AVAILABLE:
             logger.error(f"System command error: {e}", exc_info=True)
             await interaction.followup.send(f"오류 발생: {e}", ephemeral=True)
     
-    @client.tree.command(name="raspi", description="라즈베리파이 하드웨어 정보를 확인합니다")
-    async def raspi(interaction: discord.Interaction):
-        logger.info(f"User {interaction.user} requested Raspberry Pi info")
+    @client.tree.command(name="hardware", description="시스템 하드웨어 정보를 확인합니다")
+    async def hardware(interaction: discord.Interaction):
+        logger.info(f"User {interaction.user} requested hardware info")
         await interaction.response.defer(ephemeral=True)
         
         try:
-            info = get_raspi_info()
+            info = get_hardware_info()
             if not info:
-                await interaction.followup.send("라즈베리파이 정보를 가져올 수 없습니다", ephemeral=True)
+                await interaction.followup.send("하드웨어 정보를 가져올 수 없습니다", ephemeral=True)
                 return
             
             embed = discord.Embed(
-                title="Raspberry Pi 상태",
+                title=f"{MONITOR_TYPE} 하드웨어 상태",
                 color=discord.Color.green() if info.get('cpu_temp', 100) < 70 else discord.Color.red()
             )
             
@@ -659,7 +689,7 @@ if RASPI_AVAILABLE:
             await interaction.followup.send(embed=embed, ephemeral=True)
             
         except Exception as e:
-            logger.error(f"Raspi command error: {e}", exc_info=True)
+            logger.error(f"Hardware command error: {e}", exc_info=True)
             await interaction.followup.send(f"오류 발생: {e}", ephemeral=True)
     
     @client.tree.command(name="process", description="봇 프로세스 정보를 확인합니다")
@@ -783,9 +813,10 @@ if __name__ == "__main__":
         scraper_scheduler = BackgroundScheduler()
         # 주기적으로 공지사항 체크
         scraper_scheduler.add_job(
-            job_wrapper, 
-            'interval', 
+            job_wrapper,
+            'interval',
             seconds=SCAN_INTERVAL_SECONDS,
+            next_run_time=datetime.now(),  # 시작 직후 즉시 한 번 실행
             max_instances=1,
             coalesce=True  # 밀린 작업은 하나로 합침
         )
