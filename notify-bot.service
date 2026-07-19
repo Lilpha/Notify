@@ -1,0 +1,18 @@
+[Unit]
+Description=Hallym Notify Discord Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kim
+WorkingDirectory=/home/kim/notify
+Environment="PATH=/home/kim/notify/venv/bin:/usr/bin" "PYTHONIOENCODING=utf-8" "LANG=C.UTF-8" "LC_ALL=C.UTF-8"
+ExecStart=/home/kim/notify/venv/bin/python3 /home/kim/notify/main.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/kim/notify/logs/bot_nohup.log
+StandardError=append:/home/kim/notify/logs/bot_nohup.log
+
+[Install]
+WantedBy=multi-user.target
