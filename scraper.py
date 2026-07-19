@@ -113,7 +113,16 @@ class NoticeMonitor:
 
                 if notice_id > last_id:
                     title_elem = row.select_one(".td-title a")
-                    title = title_elem.get_text(strip=True) if title_elem else "제목 없음"
+                    # <strong> 태그에서 실제 제목만 추출 (카테고리/새글 뱃지 제외)
+                    if title_elem:
+                        strong = title_elem.select_one("strong")
+                        cate = title_elem.select_one(".cate-name")
+                        cate_text = cate.get_text(strip=True) if cate else ""
+                        title = strong.get_text(strip=True) if strong else title_elem.get_text(strip=True)
+                        if cate_text:
+                            title = f"[{cate_text}] {title}"
+                    else:
+                        title = "제목 없음"
                     
                     link_elem = row.select_one(".td-title a")
                     raw_link = link_elem.get("href") if link_elem else ""
@@ -187,6 +196,21 @@ monitors = [
         site_name="산학협력단",
         url="https://www.hallym.ac.kr/sanhak/5063/subview.do",
         id_file="last_id_sanhak.txt"
+    ),
+    NoticeMonitor(
+        site_name="장학 공지",
+        url="https://www.hallym.ac.kr/hallym/1135/subview.do",
+        id_file="last_id_scholarship.txt"
+    ),
+    NoticeMonitor(
+        site_name="학사 공지",
+        url="https://www.hallym.ac.kr/hallym/1134/subview.do",
+        id_file="last_id_haksa.txt"
+    ),
+    NoticeMonitor(
+        site_name="SW취업정보",
+        url="https://www.hallym.ac.kr/hlsw/3973/subview.do",
+        id_file="last_id_swjob.txt"
     )
 ]
 

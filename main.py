@@ -150,26 +150,26 @@ class NoticeBot(discord.Client):
             await asyncio.sleep(1)
     
     def update_daily_stats():
-    """날짜가 바뀌었는지 확인하고 오늘 통계 초기화"""
-    global stats
-    today = datetime.now().date()
-    if stats["today_date"] != today:
-        logger.info(f"Date changed: {stats['today_date']} -> {today}, resetting today's count")
-        stats["today_date"] = today
-        stats["today_notices"] = 0
-        return True
-    return False
+        """날짜가 바뀌었는지 확인하고 오늘 통계 초기화"""
+        global stats
+        today = datetime.now().date()
+        if stats["today_date"] != today:
+            logger.info(f"Date changed: {stats['today_date']} -> {today}, resetting today's count")
+            stats["today_date"] = today
+            stats["today_notices"] = 0
+            return True
+        return False
 
-async def send_notices(self, notices):
-    """공지사항을 Discord에 전송"""
-    global stats
-    
-    # 날짜 변경 체크 및 초기화
-    update_daily_stats()
-    
-    # 통계 업데이트
-    stats["total_notices"] += len(notices)
-    stats["today_notices"] += len(notices)
+    async def send_notices(self, notices):
+        """공지사항을 Discord에 전송"""
+        global stats
+        
+        # 날짜 변경 체크 및 초기화
+        NoticeBot.update_daily_stats()
+        
+        # 통계 업데이트
+        stats["total_notices"] += len(notices)
+        stats["today_notices"] += len(notices)
         for notice in notices:
             site = notice.get('site', '알 수 없음')
             stats["site_notices"][site] = stats["site_notices"].get(site, 0) + 1
@@ -360,7 +360,8 @@ async def lastcheck(interaction: discord.Interaction):
     app_commands.Choice(name="SW중심사업단", value="hlsw"),
     app_commands.Choice(name="학생생활관", value="dorm"),
     app_commands.Choice(name="일반공지", value="hallym_msg"),
-    app_commands.Choice(name="산학협력단", value="sanhak")
+    app_commands.Choice(name="산학협력단", value="sanhak"),
+    app_commands.Choice(name="장학 공지", value="scholarship")
 ])
 async def forcescan(interaction: discord.Interaction, site: app_commands.Choice[str] = None):
     """강제 스캔 - 즉시 응답하고 백그라운드 실행"""
@@ -381,7 +382,8 @@ async def forcescan(interaction: discord.Interaction, site: app_commands.Choice[
                         "hlsw": 1, 
                         "dorm": 2, 
                         "hallym_msg": 3, 
-                        "sanhak": 4
+                        "sanhak": 4,
+                        "scholarship": 5
                     }
                     if site.value in site_map:
                         logger.info(f"Starting force scan for {site.name}")
