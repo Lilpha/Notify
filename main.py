@@ -1,4 +1,4 @@
-﻿import discord
+import discord
 import asyncio
 import json
 import os
@@ -361,7 +361,9 @@ async def lastcheck(interaction: discord.Interaction):
     app_commands.Choice(name="학생생활관", value="dorm"),
     app_commands.Choice(name="일반공지", value="hallym_msg"),
     app_commands.Choice(name="산학협력단", value="sanhak"),
-    app_commands.Choice(name="장학 공지", value="scholarship")
+    app_commands.Choice(name="장학 공지", value="scholarship"),
+    app_commands.Choice(name="학사 공지", value="haksa"),
+    app_commands.Choice(name="SW취업정보", value="swjob")
 ])
 async def forcescan(interaction: discord.Interaction, site: app_commands.Choice[str] = None):
     """강제 스캔 - 즉시 응답하고 백그라운드 실행"""
@@ -383,7 +385,9 @@ async def forcescan(interaction: discord.Interaction, site: app_commands.Choice[
                         "dorm": 2, 
                         "hallym_msg": 3, 
                         "sanhak": 4,
-                        "scholarship": 5
+                        "scholarship": 5,
+                        "haksa": 6,
+                        "swjob": 7
                     }
                     if site.value in site_map:
                         logger.info(f"Starting force scan for {site.name}")
